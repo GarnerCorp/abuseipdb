@@ -1,0 +1,7 @@
+#!/bin/sh
+curl -G https://api.abuseipdb.com/api/v2/blacklist \
+  -d countMinimum=15 \
+  -d maxAgeInDays=60 \
+  -d confidenceMinimum=90 \
+  -H "Key: $YOUR_API_KEY" \
+  -H "Accept: application/json" > blacklist.json
