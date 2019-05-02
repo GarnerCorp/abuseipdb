@@ -1,0 +1,10 @@
+#!/bin/sh
+base=$1
+file=outgoing/$base
+output=$(echo $base|sed -e 's/csv$/json/')
+curl https://api.abuseipdb.com/api/v2/bulk-report \
+  -s \
+  -F "csv=@$file;filename=report.csv" \
+  -H "Key: $YOUR_API_KEY" \
+  -H "Accept: application/json" \
+  > logs/$output
