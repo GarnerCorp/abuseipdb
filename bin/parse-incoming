@@ -1,0 +1,118 @@
+#!/usr/bin/env perl
+
+if (scalar @ARGV < 3) {
+  print "$0 OUTPUT_FORMAT DATE HOSTS...\n";
+  print "\n";
+  print "OUTPUT_FORMAT: - | 'host' | FILENAME\n";
+  exit 0;
+}
+my $verbose = 0;
+my $output = $ARGV[0];
+shift @ARGV;
+my $date = $ARGV[0];
+shift @ARGV;
+
+sub printheader {
+  print OUTPUT "IP,Categories,ReportDate,Comment\n";
+}
+
+my $ssh_brute='"18,22"';
+
+sub parse {
+  my ($date, $host) = @_;
+  my $file = "incoming/$host.$date.log";
+  my $state = 0;
+
+  open LOG, '<', $file;
+  while (<LOG>) {
+      if (/SSHGuard blocked:/) {
+        $lastip = '';
+        $state = 1;
+        next;
+      }
+      if (/^Failed logins from:/) {
+        $lastip = '';
+        $state = 2;
+        next;
+      }
+      if (/^Illegal users from:/) {
+        $lastip = '';
+        $state = 3;
+        next;
+      }
+    # SSHGuard
+    if ($state == 1) {
+      # SSHGuard
+      #     103.17.159.54:4: >945secs: 40 danger in 4 attacks over 358 seconds (all: 80d in 2 abuses over 2641s).
+      #     1.179.185.50: 1680 secs (4 attacks in 200 secs, after 2 abuses over 4645 secs)
+      if (s{^\s+([0-9.]*):(?:\d+:|) >?\d+ ?secs:? .*?\((.*)\)}{$1,$ssh_brute,$date,"$2 [sshguard]"}) {
+        print OUTPUT;
+      } elsif (s{^\s+"([0-9.]*)/\d+": >?\d+ ?secs? .*?\((.*)\)}{$1,$ssh_brute,$date,"$2 [sshguard]"}) {
+        print OUTPUT;
+      } else {
+        last;
+      }
+    } elsif ($state == 2) {
+      # Failed logins from:
+      #     1.6.92.157: 1 time
+      #        backup/password: 1 time
+      if (/^\s{4}((?:\d+\.){3}\d+)(?: \(.*\)|): (\d+ time.*)/i) {
+        $lastip = $1;
+        print OUTPUT "$lastip,$ssh_brute,$date,brute force $2 [ssh]\n" unless $verbose;
+      } elsif (m{^\s{7}(\S+?)/[^:]*: (\d+ times?)}i) {
+        print OUTPUT "$lastip,$ssh_brute,$date,$1 brute force $2 [ssh]\n" if $verbose;
+      }
+    } elsif ($state == 3) {
+      # Illegal users from:
+      #     1.6.19.155: 1 time
+      #        amssys: 1 time
+      if (/^\s{4}((?:\d+\.){3}\d+)(?: \(.*\)|): (\d+ time.*)/i) {
+        $lastip = $1;
+        print OUTPUT "$lastip,$ssh_brute,$date,brute force $2 [ssh]\n" unless $verbose;
+      } elsif (m{^\s{7}(\S+): (\d+ times?)}i) {
+        print OUTPUT "$lastip,$ssh_brute,$date,$1 brute force $2 [ssh]\n" if $verbose;
+      }
+    } elsif ($state == 0) {
+      # ssh standard output
+      if (/^Disconnected/) {
+        $lastip = '';
+        next if /Disconnected from user/;
+        s/^(?:\S+\s){3}//;
+        s/\[preauth].*/[ssh]/;
+        s/(user \S+ )(.*)( port.*)/$2,$ssh_brute,$date,"$1$2$3"/;
+        print OUTPUT;
+      }
+      # logwatch ssh overview
+      if (/^\s{4}((?:\d+\.){3}\d+)(?: \(.*\)|): \d+ Times/i) {
+        $lastip = $1;
+      } elsif (/^\s{7}(\S+): (\d+ Times?)/i) {
+        print OUTPUT "$lastip,$ssh_brute,$date,$1 brute force $2 [ssh]\n";
+      }
+    }
+  }
+  close LOG;
+}
+
+sub openfile {
+  my ($host, $date) = @_;
+  my $file = "outgoing/$host.$date.csv";
+  open OUTPUT, '>', $file;
+}
+if ($output eq '-') {
+  *OUTPUT=STDOUT;
+  printheader();
+} elsif ($output eq 'host') {
+} else {
+  openfile($output, $date);
+  printheader();
+}
+
+foreach my $host (@ARGV) {
+  if ($output eq 'host') {
+    openfile($host, $date);
+    printheader();
+  }
+  parse $date, $host;
+  close OUTPUT if ($output eq 'host');
+}
+close OUTPUT if ($output ne '-' && $output ne 'host');
