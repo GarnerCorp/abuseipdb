@@ -1,0 +1,23 @@
+#!/usr/bin/env perl
+
+foreach my $file (@ARGV) {
+  open FILE, '<', $file;
+  my $count = 0;
+  while (<FILE>) {
+    if (/.* (\d+) times.*/) {
+      $count += $1;
+    } elsif (/.*?(\d+) attacks.*after (\d+) abuses.*/) {
+      $count += $1 + $2;
+    } elsif (/.*brute force (\d+) Times.*/) {
+      $count += $1;
+    } elsif (/all: (\d+)d/) {
+      $count += $1/10;
+    } elsif (/user.*\[ssh\]/) {
+      $count++;
+    }
+  }
+  $file =~ s{.*/}{};
+  $file =~ s/\..*//;
+  print "$file,$count\n";
+  close FILE;
+}
