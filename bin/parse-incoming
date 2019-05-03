@@ -17,38 +17,65 @@ sub printheader {
 }
 
 my $ssh_brute='"18,22"';
+my %ipreports=();
+
+sub appendipreport {
+  my ($ip, $message) = @_;
+  my $current = defined $ipreports{$ip} ? "$ipreports{$ip}\n" : "";
+  $current .= $message;
+  $ipreports{$ip} = $current;
+}
+
+sub cmp_ip {
+    my @c = split /\./, $a;
+    my @d = split /\./, $b;
+
+    for(0.. 3) {
+        return $c[$_] <=> $d[$_] if $c[$_] != $d[$_]
+    }
+
+    return $a cmp $b
+}
+
+sub dumpipreports {
+  foreach my $ip (sort cmp_ip (keys %ipreports)) {
+    print OUTPUT "$ip,$ssh_brute,$date,\"$ipreports{$ip}\"\n";
+  }
+  %ipreports=();
+}
 
 sub parse {
   my ($date, $host) = @_;
   my $file = "incoming/$host.$date.log";
+  %ipreports = ();
   my $state = 0;
 
   open LOG, '<', $file;
   while (<LOG>) {
-      if (/SSHGuard blocked:/) {
-        $lastip = '';
-        $state = 1;
-        next;
-      }
-      if (/^Failed logins from:/) {
-        $lastip = '';
-        $state = 2;
-        next;
-      }
-      if (/^Illegal users from:/) {
-        $lastip = '';
-        $state = 3;
-        next;
-      }
+    if (/SSHGuard blocked:/) {
+      $lastip = '';
+      $state = 1;
+      next;
+    }
+    if (/^Failed logins from:/) {
+      $lastip = '';
+      $state = 2;
+      next;
+    }
+    if (/^Illegal users from:/) {
+      $lastip = '';
+      $state = 3;
+      next;
+    }
     # SSHGuard
     if ($state == 1) {
       # SSHGuard
       #     103.17.159.54:4: >945secs: 40 danger in 4 attacks over 358 seconds (all: 80d in 2 abuses over 2641s).
       #     1.179.185.50: 1680 secs (4 attacks in 200 secs, after 2 abuses over 4645 secs)
-      if (s{^\s+([0-9.]*):(?:\d+:|) >?\d+ ?secs:? .*?\((.*)\)}{$1,$ssh_brute,$date,"$2 [sshguard]"}) {
-        print OUTPUT;
-      } elsif (s{^\s+"([0-9.]*)/\d+": >?\d+ ?secs? .*?\((.*)\)}{$1,$ssh_brute,$date,"$2 [sshguard]"}) {
-        print OUTPUT;
+      if (m{^\s+([0-9.]*):(?:\d+:|) >?\d+ ?secs:? .*?\((.*)\)}) {
+        appendipreport($1, "$2 [sshguard]");
+      } elsif (m{^\s+"([0-9.]*)/\d+": >?\d+ ?secs? .*?\((.*)\)}) {
+        appendipreport($1, "$2 [sshguard]");
       } else {
         last;
       }
@@ -58,9 +85,9 @@ sub parse {
       #        backup/password: 1 time
       if (/^\s{4}((?:\d+\.){3}\d+)(?: \(.*\)|): (\d+ time.*)/i) {
         $lastip = $1;
-        print OUTPUT "$lastip,$ssh_brute,$date,brute force $2 [ssh]\n" unless $verbose;
+        appendipreport($lastip, "brute force $2 [ssh]") unless $verbose;
       } elsif (m{^\s{7}(\S+?)/[^:]*: (\d+ times?)}i) {
-        print OUTPUT "$lastip,$ssh_brute,$date,$1 brute force $2 [ssh]\n" if $verbose;
+        appendipreport($lastip, "$1 brute force $2 [ssh]") if $verbose;
       }
     } elsif ($state == 3) {
       # Illegal users from:
@@ -68,9 +95,9 @@ sub parse {
       #        amssys: 1 time
       if (/^\s{4}((?:\d+\.){3}\d+)(?: \(.*\)|): (\d+ time.*)/i) {
         $lastip = $1;
-        print OUTPUT "$lastip,$ssh_brute,$date,brute force $2 [ssh]\n" unless $verbose;
+        appendipreport($lastip, "brute force $2 [ssh]") unless $verbose;
       } elsif (m{^\s{7}(\S+): (\d+ times?)}i) {
-        print OUTPUT "$lastip,$ssh_brute,$date,$1 brute force $2 [ssh]\n" if $verbose;
+        appendipreport($lastip, "$1 brute force $2 [ssh]") if $verbose;
       }
     } elsif ($state == 0) {
       # ssh standard output
@@ -79,14 +106,15 @@ sub parse {
         next if /Disconnected from user/;
         s/^(?:\S+\s){3}//;
         s/\[preauth].*/[ssh]/;
-        s/(user \S+ )(.*)( port.*)/$2,$ssh_brute,$date,"$1$2$3"/;
-        print OUTPUT;
+        if (/(user \S+ )(.*)( port.*)/) {
+          appendipreport($2,"$1$2$3");
+        }
       }
       # logwatch ssh overview
       if (/^\s{4}((?:\d+\.){3}\d+)(?: \(.*\)|): \d+ Times/i) {
         $lastip = $1;
       } elsif (/^\s{7}(\S+): (\d+ Times?)/i) {
-        print OUTPUT "$lastip,$ssh_brute,$date,$1 brute force $2 [ssh]\n";
+        appendipreport($lastip,"$1 brute force $2 [ssh]");
       }
     }
   }
@@ -107,12 +135,21 @@ if ($output eq '-') {
   printheader();
 }
 
+sub flush {
+  dumpipreports();
+  close OUTPUT;
+}
+
 foreach my $host (@ARGV) {
   if ($output eq 'host') {
     openfile($host, $date);
     printheader();
   }
   parse $date, $host;
-  close OUTPUT if ($output eq 'host');
+  flush() if ($output eq 'host');
 }
-close OUTPUT if ($output ne '-' && $output ne 'host');
+if ($output eq '-') {
+  dumpipreports();
+} elsif ($output ne 'host') {
+  flush();
+}
